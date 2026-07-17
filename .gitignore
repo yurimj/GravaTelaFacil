@@ -1,0 +1,39 @@
+# Build outputs
+build/
+dist/
+x64/
+src/x64/
+Debug/
+Release/
+ipch/
+*.obj
+*.pdb
+*.ipdb
+*.iobj
+*.ilk
+*.recipe
+*.tlog
+*.lastbuildstate
+
+# Local downloads, screenshots and validation artifacts
+.downloads/
+artifacts/
+
+# Visual Studio / local IDE state
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+*.opendb
+
+# Runtime/installer binaries kept out of source control
+third_party/ffmpeg/ffmpeg.exe
+*.exe
+*.msi
+*.zip
+*.7z
+
+# OS noise
+Thumbs.db
+Desktop.ini
