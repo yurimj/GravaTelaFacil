@@ -1,6 +1,6 @@
 # Status do Projeto GravaTelaFacil
 
-Ultima atualizacao: 2026-07-17
+Ultima atualizacao: 2026-07-18
 
 ## Resumo atual
 
@@ -20,6 +20,8 @@ Depois de teste manual do usuario, foi corrigida uma regressao importante: o ove
 
 Nova rodada de ajustes de UX implementou icone pequeno/grande, alca central de movimento no frame, preservacao obrigatoria de ratio em `9x16` e `16x9`, botao `...` para trocar pasta de gravacao, indicador de tempo, pausa/retomada e mux final com reamostragem assíncrona para reduzir risco de dessincronismo entre som e imagem. O teste real pela UI com pausar/retomar gerou `GTFacil_2026-07-17_10-59-52.mp4` com video H.264 e audio AAC.
 
+Em 2026-07-18, foi ajustada a politica de exclusao de captura: primeiro `SetWindowDisplayAffinity` ficou somente no overlay/frame redimensionavel. Para demonstracao visual, a exclusao foi desativada temporariamente por completo, permitindo capturar tanto a janela principal quanto o frame. Reativar antes de validar a versao final de gravacao sem overlay.
+
 ## Estado geral
 
 | Area | Status | Observacao |
@@ -27,7 +29,7 @@ Nova rodada de ajustes de UX implementou icone pequeno/grande, alca central de m
 | Premissas | Concluido | Arquivo `premissas.md` criado. |
 | Checklist | Concluido | Arquivo `checklist.md` criado para rastrear requisitos. |
 | Estrutura do projeto | Validado | Solucao Visual Studio, projeto C++ e scripts criados; build Release aprovado. |
-| Interface | Validado | UI Win32 com botoes obrigatorios, botao `Pausar`, botao `...`, indicador de tempo, icones pequeno/grande, janela principal topmost acima do overlay, overlay transparente e cursor correto por borda/canto. |
+| Interface | Validado | UI Win32 com botoes obrigatorios, botao `Pausar`, botao `...`, indicador de tempo, icones pequeno/grande, janela principal topmost acima do overlay, overlay transparente e cursor correto por borda/canto. Exclusao de captura temporariamente desativada para prints de demonstracao. |
 | Captura de tela | Validado | Autotestes validaram proporcoes, limites de area, mover/redimensionar overlay, ratio fixo e MP4 com video H.264. |
 | Audio | Validado | Som do PC e microfone via WASAPI nativo validados por autotestes; sem audio tambem validado. |
 | Encoding `.mp4` | Validado | H.264/AAC via FFmpeg, com deteccao de `h264_nvenc`, `h264_qsv`, `h264_amf` e fallback `libx264`; streams dos MP4s foram inspecionados. |
@@ -44,6 +46,7 @@ Nova rodada de ajustes de UX implementou icone pequeno/grande, alca central de m
 5. Assinatura digital foi avaliada: nao e obrigatoria para o funcionamento, mas e recomendada antes de distribuicao publica ampla para reduzir alertas do Windows SmartScreen.
 6. Pausa/retomada nesta versao usa suspensao/retomada das threads do processo FFmpeg e descarte de amostras WASAPI durante pausa, mantendo uma unica gravacao final.
 7. Sincronismo A/V usa `aresample=async=1:first_pts=0`, `amix=duration=shortest` quando ha duas fontes de audio e `-shortest` no mux final.
+8. `SetWindowDisplayAffinity` esta temporariamente desativado para demonstracao; decisao final anterior era manter restrito ao overlay de selecao.
 
 ## Recomendacao tecnica inicial
 
@@ -138,3 +141,5 @@ O projeto so deve ser considerado concluido quando:
 | 2026-07-17 | Gravacao real pela UI validada em `GTFacil_2026-07-17_10-39-30.mp4`; frame `artifacts\fixed-ui-record-frame.png` confirmou video limpo. |
 | 2026-07-17 | Implementados icones pequeno/grande, alca central de movimento, ratio travado em 9:16/16:9, botao `...` para pasta, indicador de tempo e botao Pausar/Retomar. |
 | 2026-07-17 | Mux final ajustado com `aresample=async=1:first_pts=0`, `amix=duration=shortest` e `-shortest`; teste real com pausa/retomada gerou `GTFacil_2026-07-17_10-59-52.mp4`. |
+| 2026-07-18 | Removida exclusao de captura da janela principal; `SetWindowDisplayAffinity` permanece apenas no overlay para permitir print do formulario de botoes. |
+| 2026-07-18 | Desativado temporariamente todo `SetWindowDisplayAffinity` para permitir prints completos de demonstracao, incluindo frame/overlay. |

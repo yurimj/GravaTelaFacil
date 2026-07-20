@@ -401,9 +401,12 @@ void RefreshOverlayPosition() {
 
 void ExcludeWindowFromCapture(HWND hwnd) {
     if (!hwnd) return;
+    // Temporarily disabled for demo screenshots. Re-enable before release recording validation.
+#if 0
     if (!SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)) {
         SetWindowDisplayAffinity(hwnd, WDA_MONITOR);
     }
+#endif
 }
 
 void ApplyAspect(SizeMode mode) {
@@ -1522,7 +1525,6 @@ int RunSelfTestUi(HINSTANCE instance) {
 
     SetLayeredWindowAttributes(g_app.overlayWindow, OVERLAY_TRANSPARENT_COLOR, 255, LWA_COLORKEY);
     ExcludeWindowFromCapture(g_app.overlayWindow);
-    ExcludeWindowFromCapture(hwnd);
     RefreshOverlayPosition();
 
     if (!g_app.recordButton || WindowText(g_app.recordButton) != L"Gravar") return 32;
@@ -1647,7 +1649,6 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
         g_app.captureRect.bottom - g_app.captureRect.top, nullptr, nullptr, instance, nullptr);
     SetLayeredWindowAttributes(g_app.overlayWindow, OVERLAY_TRANSPARENT_COLOR, 255, LWA_COLORKEY);
     ExcludeWindowFromCapture(g_app.overlayWindow);
-    ExcludeWindowFromCapture(hwnd);
 
     ShowWindow(hwnd, show);
     UpdateWindow(hwnd);

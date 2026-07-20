@@ -23,7 +23,7 @@ Legenda:
 
 | ID | Requisito | Status | Evidencia / observacao |
 | --- | --- | --- | --- |
-| UI-01 | Interface bonita, estilizada, profissional e confiavel | Validado | Capturas visuais `artifacts\ui-main-after-topmost.png` e `artifacts\overlay-transparent-check.png` inspecionadas; janela principal fica acessivel e overlay nao escurece a tela. |
+| UI-01 | Interface bonita, estilizada, profissional e confiavel | Validado | Capturas visuais `artifacts\ui-main-after-topmost.png` e `artifacts\overlay-transparent-check.png` inspecionadas; janela principal fica acessivel e overlay nao escurece a tela. Em 2026-07-18, a exclusao de captura foi desativada temporariamente para prints de demonstracao. |
 | UI-02 | Botao `Gravar` | Validado | `--self-test-ui` confirmou botao `Gravar`; fluxo de gravacao validado por `--self-test-record`. |
 | UI-03 | Botao `Tamanho` | Validado | `--self-test-ui` confirmou botao `Tamanho`. |
 | UI-04 | Opcao `Selecao livre` no botao `Tamanho` | Validado | Overlay ajustavel existe e `--self-test-ui` confirmou janela de overlay. |
@@ -58,7 +58,7 @@ Legenda:
 | ID | Requisito | Status | Evidencia / observacao |
 | --- | --- | --- | --- |
 | REC-01 | Software grava a tela | Validado | Autoteste do app instalado gerou MP4 com video H.264; gravacao real pela UI gerou `GTFacil_2026-07-17_10-39-30.mp4` e frame limpo `artifacts\fixed-ui-record-frame.png`. |
-| REC-02 | Gravacao respeita area selecionada | Validado | `--self-test-record` usa `captureRect`; gravacao real pela UI gerou MP4 960x540 sem capturar overlay/controle. |
+| REC-02 | Gravacao respeita area selecionada | Validado | `--self-test-record` usa `captureRect`; gravacao real pela UI gerou MP4 960x540 sem capturar overlay. Em 2026-07-18, `SetWindowDisplayAffinity` foi desativado temporariamente para demonstracao; reativar antes de validar gravacao final sem overlay. |
 | REC-03 | Gravacao em `.mp4` | Validado | Autoteste do app instalado gerou `C:\Users\Administrador\Videos\GTFacil\GTFacil_self_test.mp4` com streams H.264 e AAC. |
 | REC-04 | Detecta melhor codec/encoder disponivel | Validado | `--self-test-logic` validou FFmpeg com H.264; app prefere `libx264` quando disponivel e usa fallback hardware se necessario. |
 | REC-05 | Boa qualidade visual | Validado | MP4s gerados pelos autotestes foram inspecionados com H.264, `yuv420p` e dimensao correta 640x360; app usa `faststart` e preset de baixa latencia. |
