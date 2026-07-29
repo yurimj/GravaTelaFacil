@@ -20,7 +20,12 @@ Depois de teste manual do usuario, foi corrigida uma regressao importante: o ove
 
 Nova rodada de ajustes de UX implementou icone pequeno/grande, alca central de movimento no frame, preservacao obrigatoria de ratio em `9x16` e `16x9`, botao `...` para trocar pasta de gravacao, indicador de tempo, pausa/retomada e mux final com reamostragem assíncrona para reduzir risco de dessincronismo entre som e imagem. O teste real pela UI com pausar/retomar gerou `GTFacil_2026-07-17_10-59-52.mp4` com video H.264 e audio AAC.
 
-Em 2026-07-18, foi ajustada a politica de exclusao de captura: primeiro `SetWindowDisplayAffinity` ficou somente no overlay/frame redimensionavel. Para demonstracao visual, a exclusao foi desativada temporariamente por completo, permitindo capturar tanto a janela principal quanto o frame. Reativar antes de validar a versao final de gravacao sem overlay.
+Em 2026-07-29, `SetWindowDisplayAffinity` foi reativado no overlay/frame redimensionavel. A moldura permanece visivel ao usuario, mas fica excluida da captura; a janela principal continua capturavel quando estiver dentro da area selecionada.
+
+As preferencias de tamanho e area de captura, som e microfone e pasta de gravacao agora sao persistidas por usuario em `HKCU\Software\GravaTelaFacil` e restauradas na proxima abertura.
+
+A barra de comandos usa icones grandes duotone com texto abaixo, na ordem `Gravar`, `Pausar`, `Abrir`, `Tamanho`, `Som`.
+Ao iniciar uma gravacao, o botao principal troca o circulo REC pelo quadrado vermelho Stop e retorna ao REC depois de parar.
 
 ## Estado geral
 
@@ -29,13 +34,13 @@ Em 2026-07-18, foi ajustada a politica de exclusao de captura: primeiro `SetWind
 | Premissas | Concluido | Arquivo `premissas.md` criado. |
 | Checklist | Concluido | Arquivo `checklist.md` criado para rastrear requisitos. |
 | Estrutura do projeto | Validado | Solucao Visual Studio, projeto C++ e scripts criados; build Release aprovado. |
-| Interface | Validado | UI Win32 com botoes obrigatorios, botao `Pausar`, botao `...`, indicador de tempo, icones pequeno/grande, janela principal topmost acima do overlay, overlay transparente e cursor correto por borda/canto. Exclusao de captura temporariamente desativada para prints de demonstracao. |
+| Interface | Validado | UI Win32 com botoes obrigatorios, botao `Pausar`, botao `...`, indicador de tempo, icones pequeno/grande, preferencias persistentes, janela principal topmost acima do overlay e overlay excluido da captura. |
 | Captura de tela | Validado | Autotestes validaram proporcoes, limites de area, mover/redimensionar overlay, ratio fixo e MP4 com video H.264. |
 | Audio | Validado | Som do PC e microfone via WASAPI nativo validados por autotestes; sem audio tambem validado. |
 | Encoding `.mp4` | Validado | H.264/AAC via FFmpeg, com deteccao de `h264_nvenc`, `h264_qsv`, `h264_amf` e fallback `libx264`; streams dos MP4s foram inspecionados. |
 | Pasta de saida | Validado | App iniciou e confirmou `C:\Users\Administrador\Videos\GTFacil`. |
 | Instalador | Validado | `dist\GravaTelaFacil-Setup.exe` gerado, instalado em pasta temporaria e validado com autoteste do app instalado. |
-| Testes/validacao | Validado | Validacao estatica passou, build Release passou, app iniciou, instalador instalou e passou em `--self-test-ui`, `--self-test-logic`, `--self-test-runtime`, `--self-test-open-folder`, `--self-test-record`, `--self-test-record-mic`, `--self-test-record-mix` e `--self-test-record-no-audio`; teste real com pausar/retomar gerou MP4 valido. |
+| Testes/validacao | Validado | Validacao estatica passou, build Release passou e os autotestes incluem UI, logica, runtime, persistencia de preferencias, abertura de pasta e os modos de gravacao/audio. |
 
 ## Decisoes finais desta versao
 
@@ -46,7 +51,7 @@ Em 2026-07-18, foi ajustada a politica de exclusao de captura: primeiro `SetWind
 5. Assinatura digital foi avaliada: nao e obrigatoria para o funcionamento, mas e recomendada antes de distribuicao publica ampla para reduzir alertas do Windows SmartScreen.
 6. Pausa/retomada nesta versao usa suspensao/retomada das threads do processo FFmpeg e descarte de amostras WASAPI durante pausa, mantendo uma unica gravacao final.
 7. Sincronismo A/V usa `aresample=async=1:first_pts=0`, `amix=duration=shortest` quando ha duas fontes de audio e `-shortest` no mux final.
-8. `SetWindowDisplayAffinity` esta temporariamente desativado para demonstracao; decisao final anterior era manter restrito ao overlay de selecao.
+8. `SetWindowDisplayAffinity` esta ativo somente no overlay de selecao, impedindo que a moldura verde/vermelha apareca no video.
 
 ## Recomendacao tecnica inicial
 
@@ -143,3 +148,6 @@ O projeto so deve ser considerado concluido quando:
 | 2026-07-17 | Mux final ajustado com `aresample=async=1:first_pts=0`, `amix=duration=shortest` e `-shortest`; teste real com pausa/retomada gerou `GTFacil_2026-07-17_10-59-52.mp4`. |
 | 2026-07-18 | Removida exclusao de captura da janela principal; `SetWindowDisplayAffinity` permanece apenas no overlay para permitir print do formulario de botoes. |
 | 2026-07-18 | Desativado temporariamente todo `SetWindowDisplayAffinity` para permitir prints completos de demonstracao, incluindo frame/overlay. |
+| 2026-07-29 | Reativado `SetWindowDisplayAffinity` no overlay para impedir que a moldura verde/vermelha apareca nas gravacoes. |
+| 2026-07-29 | Implementada persistencia de tamanho/area, som/microfone e pasta em `HKCU\Software\GravaTelaFacil`, com autoteste dedicado. |
+| 2026-07-29 | Aplicado conjunto B de icones duotone em toolbar; `Abrir` foi movido para depois de `Pausar`. |

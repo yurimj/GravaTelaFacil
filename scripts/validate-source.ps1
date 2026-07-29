@@ -5,9 +5,26 @@ $requiredFiles = @(
   "premissas.md",
   "checklist.md",
   "status.md",
+  "AGENTS.md",
   "GravaTelaFacil.sln",
   "src\GravaTelaFacil.vcxproj",
+  "src\GravaTelaFacil.rc",
+  "src\resource.h",
   "src\main.cpp",
+  "assets\GravaTelaFacil.png",
+  "assets\GravaTelaFacil.ico",
+  "assets\toolbar\record.png",
+  "assets\toolbar\record.ico",
+  "assets\toolbar\stop.png",
+  "assets\toolbar\stop.ico",
+  "assets\toolbar\pause.png",
+  "assets\toolbar\pause.ico",
+  "assets\toolbar\open.png",
+  "assets\toolbar\open.ico",
+  "assets\toolbar\size.png",
+  "assets\toolbar\size.ico",
+  "assets\toolbar\sound.png",
+  "assets\toolbar\sound.ico",
   "scripts\build-release.ps1",
   "scripts\package-installer.ps1",
   "scripts\check-environment.ps1",
@@ -29,6 +46,9 @@ $requiredTokens = @{
     "ChooseOutputDirectory",
     "SetProcessThreadsSuspended",
     "SetWindowDisplayAffinity",
+    "IDI_APP_ICON",
+    "IDI_TOOLBAR_RECORD",
+    "IDI_TOOLBAR_STOP",
     "aresample=async=1:first_pts=0",
     "-shortest",
     "Selecao livre",
@@ -50,6 +70,7 @@ $requiredTokens = @{
     "--self-test-ui",
     "--self-test-logic",
     "--self-test-runtime",
+    "--self-test-settings",
     "--self-test-open-folder",
     "--self-test-record",
     "--self-test-record-mic",
@@ -61,7 +82,18 @@ $requiredTokens = @{
     "third_party\ffmpeg\ffmpeg.exe",
     "Videos\GTFacil",
     "WizardStyle=modern",
+    "SetupIconFile=..\assets\GravaTelaFacil.ico",
     "Source: ""..\third_party\ffmpeg\ffmpeg.exe"""
+  )
+  "src\GravaTelaFacil.vcxproj" = @(
+    "ResourceCompile Include=""GravaTelaFacil.rc"""
+  )
+  "src\GravaTelaFacil.rc" = @(
+    "IDI_APP_ICON ICON ""..\\assets\\GravaTelaFacil.ico""",
+    "IDI_TOOLBAR_RECORD ICON ""..\\assets\\toolbar\\record.ico""",
+    "IDI_TOOLBAR_STOP ICON ""..\\assets\\toolbar\\stop.ico""",
+    "IDI_TOOLBAR_PAUSE ICON ""..\\assets\\toolbar\\pause.ico""",
+    "IDI_TOOLBAR_OPEN ICON ""..\\assets\\toolbar\\open.ico"""
   )
   "scripts\package-installer.ps1" = @(
     "ffmpeg.exe nao encontrado",

@@ -11,6 +11,8 @@
 #include <shlwapi.h>
 #include <tlhelp32.h>
 
+#include "resource.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -50,6 +52,8 @@ constexpr int ID_SOUND_NO_MIC = 4002;
 constexpr int ID_SOUND_NO_AUDIO = 4003;
 constexpr int ID_MIC_BASE = 4100;
 constexpr COLORREF OVERLAY_TRANSPARENT_COLOR = RGB(255, 0, 255);
+constexpr wchar_t SETTINGS_REGISTRY_PATH[] = L"Software\\GravaTelaFacil";
+constexpr wchar_t SETTINGS_SELF_TEST_PATH[] = L"Software\\GravaTelaFacil\\SelfTest";
 
 enum class SizeMode { Free, Vertical916, Horizontal169 };
 enum class DragMode { None, Move, N, S, E, W, NE, NW, SE, SW };
@@ -83,10 +87,15 @@ struct AppState {
     HWND openButton{};
     HWND pauseButton{};
     HWND browseButton{};
-    HFONT titleFont{};
     HFONT uiFont{};
     HICON iconSmall{};
     HICON iconLarge{};
+    HICON recordIcon{};
+    HICON stopIcon{};
+    HICON pauseIcon{};
+    HICON sizeIcon{};
+    HICON soundIcon{};
+    HICON openIcon{};
     SizeMode sizeMode = SizeMode::Free;
     bool recordSystemAudio = true;
     bool noAudio = false;
@@ -96,6 +105,9 @@ struct AppState {
     ULONGLONG pausedTotalMs = 0;
     int selectedMic = -1;
     std::vector<MicDevice> microphones;
+    std::wstring preferredMicrophoneId;
+    bool hasSavedMicrophoneSelection = false;
+    bool settingsPersistenceEnabled = true;
     AudioDevice defaultRenderDevice{};
     fs::path outputDirectoryOverride;
     RECT captureRect{ 160, 120, 1120, 660 };
@@ -217,46 +229,13 @@ std::wstring TimestampFileName() {
 }
 
 HICON CreateAppIcon(int size) {
-    HDC screen = GetDC(nullptr);
-    HDC dc = CreateCompatibleDC(screen);
-    HBITMAP color = CreateCompatibleBitmap(screen, size, size);
-    HBITMAP mask = CreateBitmap(size, size, 1, 1, nullptr);
-    HGDIOBJ old = SelectObject(dc, color);
+    return static_cast<HICON>(LoadImageW(g_app.instance, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+        size, size, LR_DEFAULTCOLOR));
+}
 
-    RECT rc{ 0, 0, size, size };
-    HBRUSH bg = CreateSolidBrush(RGB(246, 248, 251));
-    FillRect(dc, &rc, bg);
-    DeleteObject(bg);
-
-    HPEN green = CreatePen(PS_SOLID, (std::max)(2, size / 8), RGB(77, 190, 42));
-    HGDIOBJ oldPen = SelectObject(dc, green);
-    HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-    int pad = (std::max)(2, size / 6);
-    Rectangle(dc, pad, pad, size - pad, size - pad);
-
-    HPEN red = CreatePen(PS_SOLID, (std::max)(1, size / 12), RGB(220, 38, 38));
-    SelectObject(dc, red);
-    MoveToEx(dc, size / 2, size / 4, nullptr);
-    LineTo(dc, size / 2, size * 3 / 4);
-    MoveToEx(dc, size / 4, size / 2, nullptr);
-    LineTo(dc, size * 3 / 4, size / 2);
-
-    SelectObject(dc, oldBrush);
-    SelectObject(dc, oldPen);
-    SelectObject(dc, old);
-    DeleteObject(green);
-    DeleteObject(red);
-    DeleteDC(dc);
-    ReleaseDC(nullptr, screen);
-
-    ICONINFO info{};
-    info.fIcon = TRUE;
-    info.hbmColor = color;
-    info.hbmMask = mask;
-    HICON icon = CreateIconIndirect(&info);
-    DeleteObject(color);
-    DeleteObject(mask);
-    return icon;
+HICON LoadToolbarIcon(int resourceId) {
+    return static_cast<HICON>(LoadImageW(g_app.instance, MAKEINTRESOURCEW(resourceId), IMAGE_ICON,
+        48, 48, LR_DEFAULTCOLOR));
 }
 
 std::wstring FormatElapsed() {
@@ -386,6 +365,95 @@ void ClampCaptureRect() {
     if (g_app.captureRect.bottom > screen.bottom) OffsetRect(&g_app.captureRect, 0, screen.bottom - g_app.captureRect.bottom);
 }
 
+bool ReadRegistryDword(HKEY key, const wchar_t* name, DWORD& value) {
+    DWORD type = 0;
+    DWORD size = sizeof(value);
+    return RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE*>(&value), &size) == ERROR_SUCCESS &&
+        type == REG_DWORD && size == sizeof(value);
+}
+
+bool ReadRegistryString(HKEY key, const wchar_t* name, std::wstring& value) {
+    DWORD type = 0;
+    DWORD size = 0;
+    if (RegQueryValueExW(key, name, nullptr, &type, nullptr, &size) != ERROR_SUCCESS ||
+        (type != REG_SZ && type != REG_EXPAND_SZ)) {
+        return false;
+    }
+    std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, L'\0');
+    if (RegQueryValueExW(key, name, nullptr, &type, reinterpret_cast<BYTE*>(buffer.data()), &size) != ERROR_SUCCESS) {
+        return false;
+    }
+    value.assign(buffer.data());
+    return true;
+}
+
+bool WriteRegistryDword(HKEY key, const wchar_t* name, DWORD value) {
+    return RegSetValueExW(key, name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&value), sizeof(value)) == ERROR_SUCCESS;
+}
+
+bool WriteRegistryString(HKEY key, const wchar_t* name, const std::wstring& value) {
+    DWORD size = static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t));
+    return RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), size) == ERROR_SUCCESS;
+}
+
+bool SaveSettingsToRegistry(const wchar_t* registryPath = SETTINGS_REGISTRY_PATH) {
+    if (!g_app.settingsPersistenceEnabled && registryPath == SETTINGS_REGISTRY_PATH) return true;
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, registryPath, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
+        return false;
+    }
+
+    bool saved = true;
+    saved = WriteRegistryDword(key, L"SizeMode", static_cast<DWORD>(g_app.sizeMode)) && saved;
+    saved = WriteRegistryDword(key, L"CaptureLeft", static_cast<DWORD>(g_app.captureRect.left)) && saved;
+    saved = WriteRegistryDword(key, L"CaptureTop", static_cast<DWORD>(g_app.captureRect.top)) && saved;
+    saved = WriteRegistryDword(key, L"CaptureRight", static_cast<DWORD>(g_app.captureRect.right)) && saved;
+    saved = WriteRegistryDword(key, L"CaptureBottom", static_cast<DWORD>(g_app.captureRect.bottom)) && saved;
+    saved = WriteRegistryDword(key, L"RecordSystemAudio", g_app.recordSystemAudio ? 1 : 0) && saved;
+    saved = WriteRegistryDword(key, L"NoAudio", g_app.noAudio ? 1 : 0) && saved;
+    saved = WriteRegistryString(key, L"MicrophoneId", g_app.preferredMicrophoneId) && saved;
+    saved = WriteRegistryString(key, L"OutputDirectory", g_app.outputDirectoryOverride.wstring()) && saved;
+    RegCloseKey(key);
+    return saved;
+}
+
+bool LoadSettingsFromRegistry(const wchar_t* registryPath = SETTINGS_REGISTRY_PATH) {
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, registryPath, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
+        return false;
+    }
+
+    DWORD value = 0;
+    if (ReadRegistryDword(key, L"SizeMode", value) && value <= static_cast<DWORD>(SizeMode::Horizontal169)) {
+        g_app.sizeMode = static_cast<SizeMode>(value);
+    }
+
+    DWORD left = 0, top = 0, right = 0, bottom = 0;
+    if (ReadRegistryDword(key, L"CaptureLeft", left) && ReadRegistryDword(key, L"CaptureTop", top) &&
+        ReadRegistryDword(key, L"CaptureRight", right) && ReadRegistryDword(key, L"CaptureBottom", bottom)) {
+        RECT savedRect{ static_cast<LONG>(left), static_cast<LONG>(top), static_cast<LONG>(right), static_cast<LONG>(bottom) };
+        if (savedRect.right > savedRect.left && savedRect.bottom > savedRect.top) {
+            g_app.captureRect = savedRect;
+            ClampCaptureRect();
+        }
+    }
+
+    if (ReadRegistryDword(key, L"RecordSystemAudio", value)) g_app.recordSystemAudio = value != 0;
+    if (ReadRegistryDword(key, L"NoAudio", value)) g_app.noAudio = value != 0;
+
+    std::wstring text;
+    if (ReadRegistryString(key, L"MicrophoneId", text)) {
+        g_app.preferredMicrophoneId = text;
+        g_app.hasSavedMicrophoneSelection = true;
+    }
+    if (ReadRegistryString(key, L"OutputDirectory", text)) {
+        g_app.outputDirectoryOverride = text.empty() ? fs::path{} : fs::path(text);
+    }
+
+    RegCloseKey(key);
+    return true;
+}
+
 void RefreshOverlayPosition() {
     if (!g_app.overlayWindow) return;
     ClampCaptureRect();
@@ -401,12 +469,9 @@ void RefreshOverlayPosition() {
 
 void ExcludeWindowFromCapture(HWND hwnd) {
     if (!hwnd) return;
-    // Temporarily disabled for demo screenshots. Re-enable before release recording validation.
-#if 0
     if (!SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)) {
         SetWindowDisplayAffinity(hwnd, WDA_MONITOR);
     }
-#endif
 }
 
 void ApplyAspect(SizeMode mode) {
@@ -554,12 +619,29 @@ std::vector<MicDevice> EnumerateMicrophones() {
 }
 
 void RefreshMicrophones() {
+    std::wstring previousMicrophoneId;
+    if (g_app.selectedMic >= 0 && g_app.selectedMic < static_cast<int>(g_app.microphones.size())) {
+        previousMicrophoneId = g_app.microphones[g_app.selectedMic].id;
+    }
+    std::wstring desiredMicrophoneId = g_app.hasSavedMicrophoneSelection ?
+        g_app.preferredMicrophoneId : previousMicrophoneId;
+
     g_app.microphones = EnumerateMicrophones();
     g_app.defaultRenderDevice = GetDefaultRenderDevice();
-    if (g_app.microphones.empty()) {
-        g_app.selectedMic = -1;
-    } else if (g_app.selectedMic < 0 || g_app.selectedMic >= static_cast<int>(g_app.microphones.size())) {
-        g_app.selectedMic = 0;
+    g_app.selectedMic = -1;
+    if (!(g_app.hasSavedMicrophoneSelection && desiredMicrophoneId.empty())) {
+        for (int i = 0; i < static_cast<int>(g_app.microphones.size()); ++i) {
+            if (g_app.microphones[i].id == desiredMicrophoneId) {
+                g_app.selectedMic = i;
+                break;
+            }
+        }
+        if (g_app.selectedMic < 0 && !g_app.hasSavedMicrophoneSelection && !g_app.microphones.empty()) {
+            g_app.selectedMic = 0;
+        }
+    }
+    if (g_app.selectedMic >= 0) {
+        g_app.preferredMicrophoneId = g_app.microphones[g_app.selectedMic].id;
     }
 }
 
@@ -573,26 +655,15 @@ void PaintMain(HWND hwnd) {
     DeleteObject(bg);
 
     SetBkMode(dc, TRANSPARENT);
-    SelectObject(dc, g_app.titleFont);
-    SetTextColor(dc, RGB(28, 35, 45));
-    RECT title{ 28, 22, client.right - 28, 58 };
-    DrawTextW(dc, L"GravaTelaFacil", -1, &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
     SelectObject(dc, g_app.uiFont);
-    SetTextColor(dc, RGB(90, 101, 116));
-    std::wstring status = g_app.recording ? (g_app.paused ? L"Pausado. Clique em Retomar para continuar no mesmo arquivo." : L"Gravando agora. A moldura vermelha indica a area ativa.") :
-        L"Pronto para gravar. Ajuste tamanho e som antes de iniciar.";
-    RECT subtitle{ 30, 60, client.right - 30, 92 };
-    DrawTextW(dc, status.c_str(), -1, &subtitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-
     SetTextColor(dc, g_app.recording ? RGB(220, 38, 38) : RGB(90, 101, 116));
     std::wstring elapsed = L"Tempo: " + FormatElapsed();
-    RECT timeRect{ 30, 150, 210, 178 };
+    RECT timeRect{ 30, 92, 210, 120 };
     DrawTextW(dc, elapsed.c_str(), -1, &timeRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
     SetTextColor(dc, RGB(90, 101, 116));
     std::wstring folder = L"Pasta: " + OutputDirectory().wstring();
-    RECT folderRect{ 30, 184, client.right - 74, 212 };
+    RECT folderRect{ 30, 126, client.right - 74, 154 };
     DrawTextW(dc, folder.c_str(), -1, &folderRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     EndPaint(hwnd, &ps);
 }
@@ -604,23 +675,76 @@ void StyleButton(HWND button, bool primary = false) {
     }
 }
 
+HICON ToolbarIconForButton(UINT controlId) {
+    switch (controlId) {
+    case ID_RECORD: return g_app.recording ? g_app.stopIcon : g_app.recordIcon;
+    case ID_PAUSE: return g_app.pauseIcon;
+    case ID_SIZE: return g_app.sizeIcon;
+    case ID_SOUND: return g_app.soundIcon;
+    case ID_OPEN: return g_app.openIcon;
+    default: return nullptr;
+    }
+}
+
+void DrawToolbarButton(const DRAWITEMSTRUCT& item) {
+    HDC dc = item.hDC;
+    RECT rc = item.rcItem;
+    bool disabled = (item.itemState & ODS_DISABLED) != 0;
+    bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    bool hot = (item.itemState & ODS_HOTLIGHT) != 0;
+
+    COLORREF backgroundColor = pressed ? RGB(221, 232, 244) : (hot ? RGB(235, 241, 248) : RGB(246, 248, 251));
+    HBRUSH background = CreateSolidBrush(backgroundColor);
+    FillRect(dc, &rc, background);
+    DeleteObject(background);
+
+    if (pressed || hot) {
+        HBRUSH border = CreateSolidBrush(RGB(164, 184, 207));
+        FrameRect(dc, &rc, border);
+        DeleteObject(border);
+    }
+
+    int iconSize = 48;
+    int iconX = rc.left + (rc.right - rc.left - iconSize) / 2 + (pressed ? 1 : 0);
+    int iconY = rc.top + 4 + (pressed ? 1 : 0);
+    HICON icon = ToolbarIconForButton(item.CtlID);
+    if (icon) {
+        DrawIconEx(dc, iconX, iconY, icon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
+    }
+
+    wchar_t label[64]{};
+    GetWindowTextW(item.hwndItem, label, static_cast<int>(std::size(label)));
+    HFONT oldFont = static_cast<HFONT>(SelectObject(dc, g_app.uiFont));
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, disabled ? GetSysColor(COLOR_GRAYTEXT) : RGB(28, 35, 45));
+    RECT labelRect{ rc.left + 2, rc.top + 53, rc.right - 2, rc.bottom - 3 };
+    DrawTextW(dc, label, -1, &labelRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(dc, oldFont);
+
+    if ((item.itemState & ODS_FOCUS) != 0) {
+        RECT focusRect = rc;
+        InflateRect(&focusRect, -3, -3);
+        DrawFocusRect(dc, &focusRect);
+    }
+}
+
 void LayoutMain(HWND hwnd) {
     RECT rc{};
     GetClientRect(hwnd, &rc);
-    int y = 104;
+    int y = 6;
     int x = 28;
     int gap = 12;
-    int h = 38;
+    int h = 78;
     SetWindowPos(g_app.recordButton, nullptr, x, y, 100, h, SWP_NOZORDER);
     x += 100 + gap;
     SetWindowPos(g_app.pauseButton, nullptr, x, y, 100, h, SWP_NOZORDER);
     x += 100 + gap;
+    SetWindowPos(g_app.openButton, nullptr, x, y, 100, h, SWP_NOZORDER);
+    x += 100 + gap;
     SetWindowPos(g_app.sizeButton, nullptr, x, y, 100, h, SWP_NOZORDER);
     x += 100 + gap;
     SetWindowPos(g_app.soundButton, nullptr, x, y, 100, h, SWP_NOZORDER);
-    x += 100 + gap;
-    SetWindowPos(g_app.openButton, nullptr, x, y, 100, h, SWP_NOZORDER);
-    SetWindowPos(g_app.browseButton, nullptr, rc.right - 58, 184, 30, 28, SWP_NOZORDER);
+    SetWindowPos(g_app.browseButton, nullptr, rc.right - 58, 126, 30, 28, SWP_NOZORDER);
 }
 
 bool OpenOutputFolder(HWND hwnd) {
@@ -672,6 +796,46 @@ int RunSelfTestOpenFolder() {
     if (!EnsureOutputDirectory(nullptr)) return 60;
     if (!OpenOutputFolder(nullptr)) return 61;
     return 0;
+}
+
+int RunSelfTestSettings() {
+    RegDeleteTreeW(HKEY_CURRENT_USER, SETTINGS_SELF_TEST_PATH);
+    auto finish = [](int code) {
+        RegDeleteTreeW(HKEY_CURRENT_USER, SETTINGS_SELF_TEST_PATH);
+        return code;
+    };
+
+    RECT screen = VirtualScreenRect();
+    int width = (std::min)(640, static_cast<int>(screen.right - screen.left));
+    int height = (std::min)(360, static_cast<int>(screen.bottom - screen.top));
+    RECT expectedRect{ screen.left, screen.top, screen.left + width, screen.top + height };
+    std::wstring expectedMicrophoneId = L"self-test-microphone-id";
+    fs::path expectedOutputDirectory = L"C:\\GTFacil-Persistence-SelfTest";
+
+    g_app.sizeMode = SizeMode::Horizontal169;
+    g_app.captureRect = expectedRect;
+    g_app.recordSystemAudio = false;
+    g_app.noAudio = false;
+    g_app.preferredMicrophoneId = expectedMicrophoneId;
+    g_app.hasSavedMicrophoneSelection = true;
+    g_app.outputDirectoryOverride = expectedOutputDirectory;
+    if (!SaveSettingsToRegistry(SETTINGS_SELF_TEST_PATH)) return finish(62);
+
+    g_app.sizeMode = SizeMode::Free;
+    g_app.captureRect = { 0, 0, 160, 120 };
+    g_app.recordSystemAudio = true;
+    g_app.noAudio = true;
+    g_app.preferredMicrophoneId.clear();
+    g_app.hasSavedMicrophoneSelection = false;
+    g_app.outputDirectoryOverride.clear();
+    if (!LoadSettingsFromRegistry(SETTINGS_SELF_TEST_PATH)) return finish(63);
+
+    if (g_app.sizeMode != SizeMode::Horizontal169) return finish(64);
+    if (!EqualRect(&g_app.captureRect, &expectedRect)) return finish(65);
+    if (g_app.recordSystemAudio || g_app.noAudio) return finish(66);
+    if (!g_app.hasSavedMicrophoneSelection || g_app.preferredMicrophoneId != expectedMicrophoneId) return finish(67);
+    if (g_app.outputDirectoryOverride != expectedOutputDirectory) return finish(68);
+    return finish(0);
 }
 
 void ShowSizeMenu(HWND hwnd) {
@@ -1023,6 +1187,10 @@ COLORREF OverlayBorderColor() {
     return g_app.recording ? RGB(220, 38, 38) : RGB(77, 190, 42);
 }
 
+bool OverlayControlsVisible() {
+    return !g_app.recording;
+}
+
 int RunSelfTestLogic() {
     RECT screen = VirtualScreenRect();
     if (screen.right <= screen.left || screen.bottom <= screen.top) return 10;
@@ -1038,6 +1206,12 @@ int RunSelfTestLogic() {
     if (!NearlyAspect(g_app.captureRect, 9.0 / 16.0)) return 15;
     ApplyAspect(SizeMode::Horizontal169);
     if (!NearlyAspect(g_app.captureRect, 16.0 / 9.0)) return 16;
+
+    g_app.recording = false;
+    if (!OverlayControlsVisible()) return 19;
+    g_app.recording = true;
+    if (OverlayControlsVisible()) return 20;
+    g_app.recording = false;
 
     RefreshMicrophones();
     OutputDirectory();
@@ -1171,6 +1345,7 @@ bool StartRecording(HWND hwnd) {
     g_app.pauseStartTick = 0;
     g_app.pausedTotalMs = 0;
     SetWindowTextW(g_app.recordButton, L"Parar");
+    InvalidateRect(g_app.recordButton, nullptr, TRUE);
     SetWindowTextW(g_app.pauseButton, L"Pausar");
     EnableWindow(g_app.pauseButton, TRUE);
     EnableWindow(g_app.browseButton, FALSE);
@@ -1222,6 +1397,7 @@ void StopRecording(HWND hwnd) {
     g_app.pauseStartTick = 0;
     g_app.pausedTotalMs = 0;
     SetWindowTextW(g_app.recordButton, L"Gravar");
+    InvalidateRect(g_app.recordButton, nullptr, TRUE);
     SetWindowTextW(g_app.pauseButton, L"Pausar");
     EnableWindow(g_app.pauseButton, FALSE);
     EnableWindow(g_app.browseButton, TRUE);
@@ -1293,20 +1469,22 @@ void PaintOverlay(HWND hwnd) {
     Rectangle(dc, 2, 2, rc.right - 2, rc.bottom - 2);
     DeleteObject(pen);
 
-    HBRUSH grip = CreateSolidBrush(RGB(226, 245, 217));
-    HPEN gripPen = CreatePen(PS_SOLID, 1, RGB(35, 80, 30));
-    SelectObject(dc, grip);
-    SelectObject(dc, gripPen);
-    int s = 11;
-    POINT points[] = {
-        { 8, 8 }, { rc.right / 2, 8 }, { rc.right - 8, 8 },
-        { 8, rc.bottom / 2 }, { rc.right - 8, rc.bottom / 2 },
-        { 8, rc.bottom - 8 }, { rc.right / 2, rc.bottom - 8 }, { rc.right - 8, rc.bottom - 8 }
-    };
-    for (POINT p : points) Rectangle(dc, p.x - s / 2, p.y - s / 2, p.x + s / 2, p.y + s / 2);
-    DrawCenterMoveHandle(dc, rc);
-    DeleteObject(gripPen);
-    DeleteObject(grip);
+    if (OverlayControlsVisible()) {
+        HBRUSH grip = CreateSolidBrush(RGB(226, 245, 217));
+        HPEN gripPen = CreatePen(PS_SOLID, 1, RGB(35, 80, 30));
+        SelectObject(dc, grip);
+        SelectObject(dc, gripPen);
+        int s = 11;
+        POINT points[] = {
+            { 8, 8 }, { rc.right / 2, 8 }, { rc.right - 8, 8 },
+            { 8, rc.bottom / 2 }, { rc.right - 8, rc.bottom / 2 },
+            { 8, rc.bottom - 8 }, { rc.right / 2, rc.bottom - 8 }, { rc.right - 8, rc.bottom - 8 }
+        };
+        for (POINT p : points) Rectangle(dc, p.x - s / 2, p.y - s / 2, p.x + s / 2, p.y + s / 2);
+        DrawCenterMoveHandle(dc, rc);
+        DeleteObject(gripPen);
+        DeleteObject(grip);
+    }
     EndPaint(hwnd, &ps);
 }
 
@@ -1341,6 +1519,10 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return TRUE;
     }
     case WM_SETCURSOR: {
+        if (!OverlayControlsVisible()) {
+            SetCursor(LoadCursor(nullptr, IDC_ARROW));
+            return TRUE;
+        }
         POINT pt{};
         GetCursorPos(&pt);
         ScreenToClient(hwnd, &pt);
@@ -1385,10 +1567,13 @@ LRESULT CALLBACK OverlayProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             RefreshOverlayPosition();
         }
         return 0;
-    case WM_LBUTTONUP:
+    case WM_LBUTTONUP: {
+        bool captureChanged = g_app.dragMode != DragMode::None && !g_app.recording;
         ReleaseCapture();
         g_app.dragMode = DragMode::None;
+        if (captureChanged) SaveSettingsToRegistry();
         return 0;
+    }
     case WM_PAINT:
         PaintOverlay(hwnd);
         return 0;
@@ -1402,17 +1587,22 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_app.mainWindow = hwnd;
         g_app.uiFont = CreateFontW(18, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
             CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        g_app.titleFont = CreateFontW(28, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
         g_app.iconSmall = CreateAppIcon(16);
         g_app.iconLarge = CreateAppIcon(32);
+        g_app.recordIcon = LoadToolbarIcon(IDI_TOOLBAR_RECORD);
+        g_app.stopIcon = LoadToolbarIcon(IDI_TOOLBAR_STOP);
+        g_app.pauseIcon = LoadToolbarIcon(IDI_TOOLBAR_PAUSE);
+        g_app.sizeIcon = LoadToolbarIcon(IDI_TOOLBAR_SIZE);
+        g_app.soundIcon = LoadToolbarIcon(IDI_TOOLBAR_SOUND);
+        g_app.openIcon = LoadToolbarIcon(IDI_TOOLBAR_OPEN);
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(g_app.iconSmall));
         SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(g_app.iconLarge));
-        g_app.recordButton = CreateWindowW(L"BUTTON", L"Gravar", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RECORD)), g_app.instance, nullptr);
-        g_app.pauseButton = CreateWindowW(L"BUTTON", L"Pausar", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PAUSE)), g_app.instance, nullptr);
-        g_app.sizeButton = CreateWindowW(L"BUTTON", L"Tamanho", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SIZE)), g_app.instance, nullptr);
-        g_app.soundButton = CreateWindowW(L"BUTTON", L"Som", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SOUND)), g_app.instance, nullptr);
-        g_app.openButton = CreateWindowW(L"BUTTON", L"Abrir", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_OPEN)), g_app.instance, nullptr);
+        DWORD toolbarButtonStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW;
+        g_app.recordButton = CreateWindowW(L"BUTTON", L"Gravar", toolbarButtonStyle, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RECORD)), g_app.instance, nullptr);
+        g_app.pauseButton = CreateWindowW(L"BUTTON", L"Pausar", toolbarButtonStyle, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_PAUSE)), g_app.instance, nullptr);
+        g_app.openButton = CreateWindowW(L"BUTTON", L"Abrir", toolbarButtonStyle, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_OPEN)), g_app.instance, nullptr);
+        g_app.sizeButton = CreateWindowW(L"BUTTON", L"Tamanho", toolbarButtonStyle, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SIZE)), g_app.instance, nullptr);
+        g_app.soundButton = CreateWindowW(L"BUTTON", L"Som", toolbarButtonStyle, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SOUND)), g_app.instance, nullptr);
         g_app.browseButton = CreateWindowW(L"BUTTON", L"...", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_BROWSE_OUTPUT)), g_app.instance, nullptr);
         StyleButton(g_app.recordButton, true);
         StyleButton(g_app.pauseButton);
@@ -1430,8 +1620,17 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_SIZE:
         LayoutMain(hwnd);
         return 0;
+    case WM_DRAWITEM: {
+        const DRAWITEMSTRUCT* item = reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+        if (item && item->CtlType == ODT_BUTTON && ToolbarIconForButton(item->CtlID)) {
+            DrawToolbarButton(*item);
+            return TRUE;
+        }
+        return FALSE;
+    }
     case WM_COMMAND: {
         int id = LOWORD(wParam);
+        bool settingsChanged = false;
         if (id == ID_RECORD) {
             if (g_app.recording) StopRecording(hwnd);
             else StartRecording(hwnd);
@@ -1445,29 +1644,47 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             TogglePauseRecording(hwnd);
         } else if (id == ID_BROWSE_OUTPUT) {
             if (!g_app.recording && ChooseOutputDirectory(hwnd)) {
+                settingsChanged = true;
                 InvalidateRect(hwnd, nullptr, TRUE);
             }
         } else if (id == ID_SIZE_FREE) {
             g_app.sizeMode = SizeMode::Free;
             RefreshOverlayPosition();
+            settingsChanged = true;
         } else if (id == ID_SIZE_9X16) {
             ApplyAspect(SizeMode::Vertical916);
+            settingsChanged = true;
         } else if (id == ID_SIZE_16X9) {
             ApplyAspect(SizeMode::Horizontal169);
+            settingsChanged = true;
         } else if (id == ID_SOUND_SYSTEM) {
             g_app.noAudio = false;
             g_app.recordSystemAudio = !g_app.recordSystemAudio;
+            settingsChanged = true;
         } else if (id == ID_SOUND_NO_MIC) {
             g_app.noAudio = false;
             g_app.selectedMic = -1;
+            g_app.preferredMicrophoneId.clear();
+            g_app.hasSavedMicrophoneSelection = true;
+            settingsChanged = true;
         } else if (id == ID_SOUND_NO_AUDIO) {
             g_app.noAudio = true;
             g_app.recordSystemAudio = false;
             g_app.selectedMic = -1;
+            g_app.preferredMicrophoneId.clear();
+            g_app.hasSavedMicrophoneSelection = true;
+            settingsChanged = true;
         } else if (id >= ID_MIC_BASE && id < ID_MIC_BASE + 500) {
-            g_app.noAudio = false;
-            g_app.selectedMic = id - ID_MIC_BASE;
+            int microphoneIndex = id - ID_MIC_BASE;
+            if (microphoneIndex >= 0 && microphoneIndex < static_cast<int>(g_app.microphones.size())) {
+                g_app.noAudio = false;
+                g_app.selectedMic = microphoneIndex;
+                g_app.preferredMicrophoneId = g_app.microphones[microphoneIndex].id;
+                g_app.hasSavedMicrophoneSelection = true;
+                settingsChanged = true;
+            }
         }
+        if (settingsChanged) SaveSettingsToRegistry();
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
     }
@@ -1488,12 +1705,18 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         PaintMain(hwnd);
         return 0;
     case WM_DESTROY:
+        SaveSettingsToRegistry();
         StopRecording(hwnd);
         if (g_app.overlayWindow) DestroyWindow(g_app.overlayWindow);
         if (g_app.uiFont) DeleteObject(g_app.uiFont);
-        if (g_app.titleFont) DeleteObject(g_app.titleFont);
         if (g_app.iconSmall) DestroyIcon(g_app.iconSmall);
         if (g_app.iconLarge) DestroyIcon(g_app.iconLarge);
+        if (g_app.recordIcon) DestroyIcon(g_app.recordIcon);
+        if (g_app.stopIcon) DestroyIcon(g_app.stopIcon);
+        if (g_app.pauseIcon) DestroyIcon(g_app.pauseIcon);
+        if (g_app.sizeIcon) DestroyIcon(g_app.sizeIcon);
+        if (g_app.soundIcon) DestroyIcon(g_app.soundIcon);
+        if (g_app.openIcon) DestroyIcon(g_app.openIcon);
         PostQuitMessage(0);
         return 0;
     }
@@ -1509,7 +1732,7 @@ std::wstring WindowText(HWND hwnd) {
 int RunSelfTestUi(HINSTANCE instance) {
     HWND hwnd = CreateWindowExW(0, L"GravaTelaFacilMain", L"GravaTelaFacil",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 640, 285, nullptr, nullptr, instance, nullptr);
+        CW_USEDEFAULT, CW_USEDEFAULT, 640, 205, nullptr, nullptr, instance, nullptr);
     if (!hwnd) return 30;
 
     g_app.overlayWindow = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
@@ -1534,6 +1757,15 @@ int RunSelfTestUi(HINSTANCE instance) {
     if (!g_app.pauseButton || WindowText(g_app.pauseButton) != L"Pausar") return 48;
     if (!g_app.browseButton || WindowText(g_app.browseButton) != L"...") return 49;
     if (!g_app.iconSmall || !g_app.iconLarge) return 50;
+    if (!g_app.recordIcon || !g_app.stopIcon || !g_app.pauseIcon || !g_app.sizeIcon || !g_app.soundIcon || !g_app.openIcon) return 51;
+    RECT recordButtonRect{}, pauseButtonRect{}, openButtonRect{}, sizeButtonRect{}, soundButtonRect{};
+    GetWindowRect(g_app.recordButton, &recordButtonRect);
+    GetWindowRect(g_app.pauseButton, &pauseButtonRect);
+    GetWindowRect(g_app.openButton, &openButtonRect);
+    GetWindowRect(g_app.sizeButton, &sizeButtonRect);
+    GetWindowRect(g_app.soundButton, &soundButtonRect);
+    if (!(recordButtonRect.left < pauseButtonRect.left && pauseButtonRect.left < openButtonRect.left &&
+        openButtonRect.left < sizeButtonRect.left && sizeButtonRect.left < soundButtonRect.left)) return 52;
     if (!IsWindow(g_app.overlayWindow)) return 36;
     if (CursorForDragMode(DragMode::N) != IDC_SIZENS) return 43;
     if (CursorForDragMode(DragMode::E) != IDC_SIZEWE) return 44;
@@ -1543,8 +1775,10 @@ int RunSelfTestUi(HINSTANCE instance) {
     if (GetWindowDisplayAffinity(g_app.overlayWindow, &affinity) && affinity != WDA_EXCLUDEFROMCAPTURE && affinity != WDA_MONITOR) return 47;
 
     g_app.recording = false;
+    if (ToolbarIconForButton(ID_RECORD) != g_app.recordIcon) return 53;
     if (OverlayBorderColor() != RGB(77, 190, 42)) return 37;
     g_app.recording = true;
+    if (ToolbarIconForButton(ID_RECORD) != g_app.stopIcon) return 54;
     if (OverlayBorderColor() != RGB(220, 38, 38)) return 38;
     g_app.recording = false;
     SetWindowTextW(g_app.recordButton, L"Parar");
@@ -1616,6 +1850,11 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
         CoUninitialize();
         return code;
     }
+    if (commandLine.find(L"--self-test-settings") != std::wstring::npos) {
+        int code = RunSelfTestSettings();
+        CoUninitialize();
+        return code;
+    }
 
     INITCOMMONCONTROLSEX icc{ sizeof(icc), ICC_STANDARD_CLASSES };
     InitCommonControlsEx(&icc);
@@ -1637,13 +1876,16 @@ int APIENTRY wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int show) {
     RegisterClassW(&overlayClass);
 
     if (commandLine.find(L"--self-test-ui") != std::wstring::npos) {
+        g_app.settingsPersistenceEnabled = false;
         int code = RunSelfTestUi(instance);
         CoUninitialize();
         return code;
     }
 
+    LoadSettingsFromRegistry();
+
     HWND hwnd = CreateWindowExW(WS_EX_TOPMOST, mainClass.lpszClassName, L"GravaTelaFacil", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 640, 285, nullptr, nullptr, instance, nullptr);
+        CW_USEDEFAULT, CW_USEDEFAULT, 640, 205, nullptr, nullptr, instance, nullptr);
     g_app.overlayWindow = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED, overlayClass.lpszClassName, L"",
         WS_POPUP, g_app.captureRect.left, g_app.captureRect.top, g_app.captureRect.right - g_app.captureRect.left,
         g_app.captureRect.bottom - g_app.captureRect.top, nullptr, nullptr, instance, nullptr);

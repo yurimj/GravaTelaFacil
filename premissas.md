@@ -39,6 +39,7 @@ Desenvolver um software profissional em C++ para Windows capaz de gravar a tela 
 24. A interface deve mostrar o tempo de gravacao.
 25. Deve existir botao para pausar e retomar a mesma gravacao.
 26. O MP4 final deve buscar manter som e imagem sincronizados.
+27. As escolhas de tamanho, area de captura, som, microfone e pasta de gravacao devem permanecer salvas ao fechar e reabrir o software.
 
 ## Instalador
 

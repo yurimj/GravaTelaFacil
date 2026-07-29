@@ -1,0 +1,9 @@
+#include "resource.h"
+
+IDI_APP_ICON ICON "..\\assets\\GravaTelaFacil.ico"
+IDI_TOOLBAR_RECORD ICON "..\\assets\\toolbar\\record.ico"
+IDI_TOOLBAR_PAUSE ICON "..\\assets\\toolbar\\pause.ico"
+IDI_TOOLBAR_SIZE ICON "..\\assets\\toolbar\\size.ico"
+IDI_TOOLBAR_SOUND ICON "..\\assets\\toolbar\\sound.ico"
+IDI_TOOLBAR_OPEN ICON "..\\assets\\toolbar\\open.ico"
+IDI_TOOLBAR_STOP ICON "..\\assets\\toolbar\\stop.ico"

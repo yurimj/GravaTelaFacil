@@ -37,6 +37,10 @@ Legenda:
 | UI-12 | Botao pequeno `...` para alterar pasta de gravacao | Validado | `ChooseOutputDirectory` implementado com `IFileDialog`/`FOS_PICKFOLDERS`; `--self-test-ui` confirmou botao `...`. |
 | UI-13 | Indicador de tempo de gravacao | Validado | `PaintMain` exibe `Tempo: HH:MM:SS`; teste real com pausa/retomada gerou MP4 `GTFacil_2026-07-17_10-59-52.mp4`. |
 | UI-14 | Botao para pausar e retomar gravacao | Validado | Botao `Pausar` alterna para `Retomar`; teste real pela UI iniciou, pausou, retomou e parou gravacao com MP4 final valido. |
+| UI-15 | Preferencias permanecem apos fechar e reabrir | Validado | Configuracoes de tamanho/area, som/microfone e pasta sao salvas em `HKCU\Software\GravaTelaFacil`; `--self-test-settings` valida escrita e restauracao. |
+| UI-16 | Botoes usam icones grandes em estilo toolbar | Validado | Botoes owner-draw usam o conjunto duotone B incorporado como recursos multirresolucao; `--self-test-ui` confirma os cinco icones. |
+| UI-17 | Botao Abrir aparece depois de Pausar | Validado | Layout segue `Gravar`, `Pausar`, `Abrir`, `Tamanho`, `Som`; ordem horizontal validada por `--self-test-ui`. |
+| UI-18 | Icone REC muda para Stop durante a gravacao | Validado | O botao principal usa o icone REC quando ocioso e o quadrado Stop enquanto `recording` esta ativo; alternancia coberta por `--self-test-ui`. |
 
 ## 3. Selecao de area
 
@@ -58,7 +62,7 @@ Legenda:
 | ID | Requisito | Status | Evidencia / observacao |
 | --- | --- | --- | --- |
 | REC-01 | Software grava a tela | Validado | Autoteste do app instalado gerou MP4 com video H.264; gravacao real pela UI gerou `GTFacil_2026-07-17_10-39-30.mp4` e frame limpo `artifacts\fixed-ui-record-frame.png`. |
-| REC-02 | Gravacao respeita area selecionada | Validado | `--self-test-record` usa `captureRect`; gravacao real pela UI gerou MP4 960x540 sem capturar overlay. Em 2026-07-18, `SetWindowDisplayAffinity` foi desativado temporariamente para demonstracao; reativar antes de validar gravacao final sem overlay. |
+| REC-02 | Gravacao respeita area selecionada | Validado | `--self-test-record` usa `captureRect`; o overlay aplica `WDA_EXCLUDEFROMCAPTURE`, com fallback para `WDA_MONITOR`, para manter a moldura visivel ao usuario sem inclui-la no video. |
 | REC-03 | Gravacao em `.mp4` | Validado | Autoteste do app instalado gerou `C:\Users\Administrador\Videos\GTFacil\GTFacil_self_test.mp4` com streams H.264 e AAC. |
 | REC-04 | Detecta melhor codec/encoder disponivel | Validado | `--self-test-logic` validou FFmpeg com H.264; app prefere `libx264` quando disponivel e usa fallback hardware se necessario. |
 | REC-05 | Boa qualidade visual | Validado | MP4s gerados pelos autotestes foram inspecionados com H.264, `yuv420p` e dimensao correta 640x360; app usa `faststart` e preset de baixa latencia. |
